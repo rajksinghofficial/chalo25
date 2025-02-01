@@ -1,0 +1,21 @@
+- name: Setup PostgreSQL
+  hosts: all
+  become: yes
+  tasks:
+    - name: Install PostgreSQL
+      apt:
+        name: postgresql-${{ postgres_version }}
+        state: present
+
+    - name: Configure PostgreSQL
+      lineinfile:
+        path: /etc/postgresql/${{ postgres_version }}/main/postgresql.conf
+        line: "max_connections = {{ max_connections }}"
+        insertafter: EOF
+      notify: Restart PostgreSQL
+
+  handlers:
+    - name: Restart PostgreSQL
+      service:
+        name: postgresql
+        state: restarted
