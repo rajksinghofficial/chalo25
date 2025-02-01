@@ -1,0 +1,39 @@
+- name: Setup PostgreSQL
+  hosts: all
+  become: yes
+  vars:
+    postgres_version: "13"  # Default value if not provided
+    max_connections: 200
+    shared_buffers: "128MB"
+
+  tasks:
+    - name: Update APT package cache
+      apt:
+        update_cache: yes
+
+    - name: Install PostgreSQL
+      apt:
+        name: "postgresql-{{ postgres_version }}"
+        state: present
+      notify: Restart PostgreSQL
+
+    - name: Configure PostgreSQL max_connections
+      lineinfile:
+        path: "/etc/postgresql/{{ postgres_version }}/main/postgresql.conf"
+        line: "max_connections = {{ max_connections }}"
+        insertafter: EOF
+      notify: Restart PostgreSQL
+
+    - name: Configure PostgreSQL shared_buffers
+      lineinfile:
+        path: "/etc/postgresql/{{ postgres_version }}/main/postgresql.conf"
+        line: "shared_buffers = {{ shared_buffers }}"
+        insertafter: EOF
+      notify: Restart PostgreSQL
+
+  handlers:
+    - name: Restart PostgreSQL
+      service:
+        name: postgresql
+        state: restarted
+

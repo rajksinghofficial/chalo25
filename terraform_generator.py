@@ -1,14 +1,44 @@
 def generate_terraform_code(instance_type, num_replicas):
+    """Generate Terraform configuration dynamically with security group settings."""
+    
     terraform_config = f"""
     provider "aws" {{
       region = "${{var.aws_region}}"
     }}
 
+    # Create Security Group for PostgreSQL
+    resource "aws_security_group" "postgres_sg" {{
+      name_prefix = "postgres_sg"
+      description = "Allow inbound SSH and PostgreSQL access"
+
+      ingress {{
+        from_port   = 22
+        to_port     = 22
+        protocol    = "tcp"
+        cidr_blocks = ["0.0.0.0/0"]  # Allow SSH from anywhere (change for security)
+      }}
+
+      ingress {{
+        from_port   = 5432
+        to_port     = 5432
+        protocol    = "tcp"
+        cidr_blocks = ["0.0.0.0/0"]  # Allow PostgreSQL access from anywhere (restrict as needed)
+      }}
+
+      egress {{
+        from_port   = 0
+        to_port     = 0
+        protocol    = "-1"
+        cidr_blocks = ["0.0.0.0/0"]
+      }}
+    }}
+
+    # Create EC2 instance for PostgreSQL
     resource "aws_instance" "postgres" {{
-      ami           = "ami-0c55b159cbfafe1f0"
+      ami           = "ami-00bb6a80f01f03502"  # Ensure this AMI is valid for your AWS region
       instance_type = "{instance_type}"
-      key_name      = "my-key"
-      security_groups = ["allow_ssh"]
+      key_name      = "raj-aws-key"  # Replace with your actual AWS EC2 key name
+      vpc_security_group_ids = [aws_security_group.postgres_sg.id]  # Attach security group
 
       tags = {{
         Name = "PostgresServer"
@@ -22,3 +52,4 @@ def generate_terraform_code(instance_type, num_replicas):
 
     with open("terraform/main.tf", "w") as f:
         f.write(terraform_config)
+

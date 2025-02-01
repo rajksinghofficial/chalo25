@@ -28,9 +28,16 @@ def initiate(params: dict):
 
     # Update Ansible Inventory
     with open("inventory.ini", "w") as f:
-        f.write(f"[postgres]\n{server_ip} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa\n")
+        f.write(f"[postgres]\n{server_ip} ansible_user=ubuntu ansible_ssh_private_key_file=./ansible.key\n")
 
     # Run Ansible Playbook
-    subprocess.run(["ansible-playbook", "-i", "inventory.ini", "ansible_playbook.yml"], check=True)
+    #subprocess.run(["ansible-playbook", "-i", "inventory.ini", "ansible_playbook.yml"], check=True)
+    subprocess.run([
+    "ansible-playbook", 
+    "-i", "inventory.ini", 
+    "ansible_playbook.yml",
+    "--extra-vars", 
+    f"postgres_version={params['postgres_version']} max_connections={params['max_connections']} shared_buffers={params['shared_buffers']}"
+    ], check=True)
 
     return {"status": "PostgreSQL cluster deployed successfully!", "server_ip": server_ip}
