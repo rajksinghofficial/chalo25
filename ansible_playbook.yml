@@ -1,83 +1,118 @@
-- name: Setup PostgreSQL with Replication
+- name: Setup PostgreSQL Primary and Replica Using Docker
   hosts: all
   become: yes
-  vars:
-    postgres_version: "13"
-    max_connections: 200
-    shared_buffers: "128MB"
-    replica_user: "replicator"
-    replica_password: "replica_password"
-    replication_slot: "replica_slot"
 
   tasks:
     - name: Update APT package cache
       apt:
         update_cache: yes
 
-    - name: Install PostgreSQL
+    - name: Install Docker & Docker-Compose
       apt:
-        name: "postgresql-{{ postgres_version }}"
+        name: 
+          - docker.io
+          - docker-compose
         state: present
-      notify: Restart PostgreSQL
 
-    - name: Configure Primary PostgreSQL
-      lineinfile:
-        path: "/etc/postgresql/{{ postgres_version }}/main/postgresql.conf"
-        line: "{{ item }}"
-        insertafter: EOF
+    - name: Create required directories
+      file:
+        path: "{{ item }}"
+        state: directory
       loop:
-        - "max_connections = {{ max_connections }}"
-        - "shared_buffers = {{ shared_buffers }}"
-        - "wal_level = replica"
-        - "archive_mode = on"
-        - "archive_command = 'cp %p /var/lib/postgresql/archive/%f'"
-        - "max_wal_senders = 3"
-        - "wal_keep_size = 64MB"
-        - "hot_standby = on"
-      notify: Restart PostgreSQL
+        - /opt/postgres-replication
+        - /opt/postgres-replication/primary
+        - /opt/postgres-replication/replica
 
-    - name: Allow replication connections
-      lineinfile:
-        path: "/etc/postgresql/{{ postgres_version }}/main/pg_hba.conf"
-        line: "host replication {{ replica_user }} 127.0.0.1/32 md5"
-      notify: Restart PostgreSQL
+    - name: Create Docker Compose file
+      copy:
+        dest: /opt/postgres-replication/docker-compose.yml
+        content: |
+          version: '3.8'
 
-    - name: Create replication user
-      postgresql_user:
-        name: "{{ replica_user }}"
-        password: "{{ replica_password }}"
-        role_attr_flags: "REPLICATION"
-      become_user: postgres
-      become: yes 
-      become_flags: "-i"  
+          services:
+            primary:
+              image: postgres:13
+              container_name: postgres_primary
+              restart: always
+              environment:
+                POSTGRES_USER: admin
+                POSTGRES_PASSWORD: admin123
+                POSTGRES_DB: mydb
+              ports:
+                - "5432:5432"
+              volumes:
+                - primary_data:/var/lib/postgresql/data
+                - ./primary/postgresql.conf:/etc/postgresql/postgresql.conf
+                - ./primary/pg_hba.conf:/etc/postgresql/pg_hba.conf
+              command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
 
-    - name: Create replication slot
-      postgresql_query:
-        query: "SELECT * FROM pg_create_physical_replication_slot('{{ replication_slot }}');"
-          #become: yes
-          #become_flags: "-i"  
-      become_user: postgres
-      ignore_errors: yes
+            replica:
+              image: postgres:13
+              container_name: postgres_replica
+              restart: always
+              environment:
+                POSTGRES_USER: admin
+                POSTGRES_PASSWORD: admin123
+              depends_on:
+                - primary
+              ports:
+                - "5433:5432"
+              volumes:
+                - replica_data:/var/lib/postgresql/data
+                - ./replica/postgresql.conf:/etc/postgresql/postgresql.conf
+                - ./replica/pg_hba.conf:/etc/postgresql/pg_hba.conf
+              command: ["/bin/bash", "-c", "
+                until pg_isready -h primary -p 5432; do sleep 2; done &&
+                PGPASSWORD=admin123 pg_basebackup -h primary -D /var/lib/postgresql/data -U admin -Fp -Xs -R -C -S replica_slot &&
+                postgres -c config_file=/etc/postgresql/postgresql.conf
+              "]
 
-    - name: Stop PostgreSQL to prepare Replica
-      systemd:
-        name: postgresql
-        state: stopped
+          volumes:
+            primary_data:
+            replica_data:
+    
+    - name: Create PostgreSQL primary config
+      copy:
+        dest: /opt/postgres-replication/primary/postgresql.conf
+        content: |
+          listen_addresses = '*'
+          wal_level = replica
+          max_wal_senders = 3
+          wal_keep_size = 64MB
+          hot_standby = on
+          archive_mode = on
+          archive_command = 'cp %p /var/lib/postgresql/archive/%f'
 
-    - name: Backup Primary Database for Replica
-      command: "pg_basebackup -D /var/lib/postgresql/{{ postgres_version }}/replica -Fp -Xs -R -P -h 127.0.0.1 -U {{ replica_user }}"
-      become_user: postgres
-      environment:
-        PGPASSWORD: "{{ replica_password }}"
+    - name: Create PostgreSQL primary authentication file
+      copy:
+        dest: /opt/postgres-replication/primary/pg_hba.conf
+        content: |
+          local   all             all                                     trust
+          host    all             all             0.0.0.0/0               md5
+          host    replication     admin           0.0.0.0/0               md5
+          host    replication     admin           172.18.0.3/32           md5  # Allow replica IP
 
-    - name: Start PostgreSQL
-      systemd:
-        name: postgresql
-        state: started
 
-  handlers:
-    - name: Restart PostgreSQL
-      service:
-        name: postgresql
-        state: restarted
+    - name: Create PostgreSQL replica config
+      copy:
+        dest: /opt/postgres-replication/replica/postgresql.conf
+        content: |
+          port = 5433
+          hot_standby = on
+          primary_conninfo = 'host=primary port=5432 user=admin password=admin123'
+          primary_slot_name = 'replica_slot'
+
+    - name: Create PostgreSQL replica authentication file
+      copy:
+        dest: /opt/postgres-replication/replica/pg_hba.conf
+        content: |
+          local   all             all                                     trust
+          host    all             all             0.0.0.0/0               md5
+          host    replication     admin           0.0.0.0/0               md5
+
+    - name: Start Docker Services
+      shell: |
+        cd /opt/postgres-replication
+        docker-compose up -d
+
 

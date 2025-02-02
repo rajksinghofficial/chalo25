@@ -3,6 +3,7 @@ import subprocess
 import json
 import os
 from terraform_generator import generate_terraform_code
+import time 
 
 app = FastAPI()
 
@@ -28,8 +29,11 @@ def initiate(params: dict):
 
     # Update Ansible Inventory
     with open("inventory.ini", "w") as f:
-        f.write(f"[postgres]\n{server_ip} ansible_user=ubuntu ansible_ssh_private_key_file=./ansible.key\n")
-
+        f.write(f"[postgres]\n{server_ip} ansible_user=ubuntu ansible_ssh_private_key_file=./ansible.key ansible_ssh_common_args='-o StrictHostKeyChecking=no'\n")
+    
+    print("halt for 100sec to start the server")
+    time.sleep(100)
+    
     # Run Ansible Playbook
     #subprocess.run(["ansible-playbook", "-i", "inventory.ini", "ansible_playbook.yml"], check=True)
     subprocess.run([
